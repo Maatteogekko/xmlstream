@@ -1,9 +1,9 @@
 part of xml_stream;
 
-class XmlStreamer {
+class XmlIterator {
   static const EMPTY = '';
-  
-  Stream<List<int>>? stream;
+
+  List<XmlEvent> iterable = [];
   // raw xmldata that needs to be parsed
   String? raw;
   // trim before lt character
@@ -13,53 +13,49 @@ class XmlStreamer {
   late String _comment;
 
   String? special_char;
-  
-  late StreamController<XmlEvent> _controller;
-  
-  bool _shutdown = false;
-  
-  
-  XmlStreamer(this.raw, {this.trimSpaces = true});
-  
-  XmlStreamer.fromStream(this.stream);
-  
-  Stream<XmlEvent> read() {
-    _controller = new StreamController<XmlEvent>();
-    XmlEvent event = createAndAddXmlEvent(XmlState.StartDocument);
-  
-    String? prev;
-    if (this.stream == null) {
-      var chars_raw = this.raw!.split("");
-      for (var ch in chars_raw) {
-        event = _processRawChar(ch, prev, event);
-        prev = ch;
-        if (_shutdown) break;
-      }
-      createAndAddXmlEvent(XmlState.EndDocument);
-      _controller.close();
-    } else {
-      late StreamSubscription controller;
-      var onData = (data) {
-        var chars_raw = new String.fromCharCodes(data).split("");
-        for (var ch in chars_raw) {
-          event = _processRawChar(ch, prev, event);
-          prev = ch;
-          if (_shutdown) {
-            controller.cancel();
-            break;
-          }
-        }
-      };
-      controller = stream!.listen(onData,
-          onDone: () {
-            createAndAddXmlEvent(XmlState.EndDocument);
-            _controller.close();
-          });
-    }
 
-    return _controller.stream;
+  bool _shutdown = false;
+
+  XmlIterator(this.raw, {this.trimSpaces = true});
+
+  /// Calling this multiple times causes the [iterable] to be cleared and recomputed.
+  Iterable<XmlEvent> read() {
+    iterable.clear();
+    XmlEvent event = createAndAddXmlEvent(XmlState.StartDocument);
+
+    String? prev;
+    // if (this.stream == null) {
+    var chars_raw = this.raw!.split("");
+    for (var ch in chars_raw) {
+      event = _processRawChar(ch, prev, event);
+      prev = ch;
+      if (_shutdown) break;
+    }
+    createAndAddXmlEvent(XmlState.EndDocument);
+    return iterable;
+    // }
+    // else {
+    //   late StreamSubscription controller;
+    //   var onData = (data) {
+    //     var chars_raw = new String.fromCharCodes(data).split("");
+    //     for (var ch in chars_raw) {
+    //       event = _processRawChar(ch, prev, event);
+    //       prev = ch;
+    //       if (_shutdown) {
+    //         controller.cancel();
+    //         break;
+    //       }
+    //     }
+    //   };
+    //   controller = stream!.listen(onData, onDone: () {
+    //     createAndAddXmlEvent(XmlState.EndDocument);
+    //     _controller.close();
+    //   });
+    // }
+
+    // return;
   }
-  
+
   XmlEvent _processRawChar(var ch, var prev, XmlEvent event) {
     switch (event.state) {
       case XmlState.CDATA:
@@ -81,7 +77,9 @@ class XmlStreamer {
       default:
         switch (ch) {
           case XmlChar.LT:
-            if (this.trimSpaces) { event.value = event.value!.trim(); }
+            if (this.trimSpaces) {
+              event.value = event.value!.trim();
+            }
             if (event.value!.isNotEmpty) {
               _addElement(event);
             }
@@ -89,7 +87,8 @@ class XmlStreamer {
             break;
           case XmlChar.GT:
             if (prev == XmlChar.SLASH) {
-              if ((event.value!.length > 0) && (event.value!.length - 1) == event.value!.lastIndexOf("/")) {
+              if ((event.value!.length > 0) &&
+                  (event.value!.length - 1) == event.value!.lastIndexOf("/")) {
                 event.value = event.value!.substring(0, event.value!.lastIndexOf("/"));
               }
               event = _createXmlEventAndCheck(event, XmlState.Closed);
@@ -131,7 +130,9 @@ class XmlStreamer {
             }
             break;
           case XmlChar.QUESTIONMARK:
-            if (prev == XmlChar.LT || event.state == XmlState.Top || event.state == XmlState.StartDocument) {
+            if (prev == XmlChar.LT ||
+                event.state == XmlState.Top ||
+                event.state == XmlState.StartDocument) {
               event = _createXmlEvent(XmlState.Top);
             } else {
               event = addCharToValue(event, ch);
@@ -171,47 +172,47 @@ class XmlStreamer {
         return event;
     }
   }
-  
+
   XmlEvent _quotes_handling(String ch, XmlEvent event) {
     if (special_char == null) {
       special_char = ch;
     } else if (special_char == ch) {
       _addElement(event);
       event = _createXmlEvent(event.state);
-      
+
       special_char = null;
     }
-    
+
     return event;
   }
-  
+
   XmlEvent _addElement(XmlEvent event) {
-    if (_shouldAdd(event)) { 
-      _controller.add(event); 
+    if (_shouldAdd(event)) {
+      iterable.add(event);
       event.fired = true;
     }
     if (event.state == XmlState.Open) {
       _open_value = event.value;
-    } 
-    
+    }
+
     return event;
   }
-  
+
   bool _shouldAdd(XmlEvent event) {
     if (event.state == XmlState.Attribute ||
         event.state == XmlState.CDATA ||
-        event.state == XmlState.Open || 
+        event.state == XmlState.Open ||
         event.state == XmlState.Closed) {
-        if (event.key == "" && event.value == "") {
-          return false;
-        }
-        if (event.fired) {
-          return false;
-        }
+      if (event.key == "" && event.value == "") {
+        return false;
+      }
+      if (event.fired) {
+        return false;
+      }
     }
     return true;
   }
-  
+
   XmlEvent addCharToValue(XmlEvent event, String ch) {
     var value = event.value;
     event.value = "$value$ch";
@@ -220,24 +221,27 @@ class XmlStreamer {
 
   XmlEvent createAndAddXmlEvent(XmlState state) {
     XmlEvent event = _createXmlEvent(state);
-      _controller.add(event);
+    iterable.add(event);
     event.fired = true;
     return event;
   }
-  
+
   XmlEvent _createXmlEventAndCheck(XmlEvent event, XmlState state) {
     if (event.fired == false) {
       _addElement(event);
     }
     return _createXmlEvent(state);
   }
-  
+
   XmlEvent _createXmlEvent(XmlState state) {
     XmlEvent event = new XmlEvent(state);
-    event..value=EMPTY
-         ..key=EMPTY;
+    event
+      ..value = EMPTY
+      ..key = EMPTY;
     return event;
   }
-  
-  void shutdown() { _shutdown = true; }
+
+  void shutdown() {
+    _shutdown = true;
+  }
 }
